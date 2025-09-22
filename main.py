@@ -8,11 +8,9 @@ from flask import Flask
 
 # ========= Config =========
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
-
 RS_USERNAMES = [None, None, None]
 START_MESSAGE = "👋 Hello! I'm ready."
 START_PHOTO = None
-
 ADMIN_ID = 6621572366
 
 # ========= Logging =========
@@ -39,18 +37,18 @@ def _normalize_username(u: str) -> str:
 def replace_all_usernames(text: str, new_usernames: list) -> str:
     if not text or not new_usernames or all(u is None for u in new_usernames):
         return text
-    usernames = re.findall(r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}', text, flags=re.IGNORECASE)
-    if not usernames:
+    pattern = r'@[a-zA-Z0-9_]{1,32}|https?://t\.me/[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}'
+    matches = re.findall(pattern, text, flags=re.IGNORECASE)
+    if not matches:
         return text
     new_text = text
-    for i, username in enumerate(usernames[:3]):
+    for i, match in enumerate(matches[:3]):
         if i < len(new_usernames) and new_usernames[i]:
-            if username.startswith('@'):
-                new_text = new_text.replace(username, f'@{new_usernames[i]}')
-            elif username.startswith('t.me/'):
-                new_text = new_text.replace(username, f't.me/{new_usernames[i]}')
+            username = new_usernames[i]
+            if match.startswith('@'):
+                new_text = new_text.replace(match, f"@{username}")
             else:
-                new_text = new_text.replace(username, f'https://t.me/{new_usernames[i]}')
+                new_text = new_text.replace(match, f"https://t.me/{username}")
     return new_text
 
 # ========= States =========
@@ -110,16 +108,28 @@ async def setphoto_receive(update, context):
         return PHOTO_WAIT
     return ConversationHandler.END
 
-# ========= Message Handler (Text only) =========
+# ========= Message handler =========
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     text = msg.text or msg.caption or ""
     if not text.strip() or not RS_USERNAMES[0]:
         return
+
     new_text = replace_all_usernames(text, RS_USERNAMES)
     if new_text != text:
         try:
-            await msg.reply_text(new_text)
+            if msg.text:
+                await msg.reply_text(new_text)
+            elif msg.photo:
+                await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
+            elif msg.video:
+                await msg.reply_video(msg.video.file_id, caption=new_text)
+            elif msg.document:
+                await msg.reply_document(msg.document.file_id, caption=new_text)
+            elif msg.audio:
+                await msg.reply_audio(msg.audio.file_id, caption=new_text)
+            elif msg.voice:
+                await msg.reply_voice(msg.voice.file_id, caption=new_text)
         except Exception as e:
             logger.error(f"Reply failed: {e}")
 
@@ -149,7 +159,7 @@ def run_bot():
     application.add_handler(rs_conv)
     application.add_handler(setstart_conv)
     application.add_handler(setphoto_conv)
-    application.add_handler(MessageHandler(filters.TEXT, process_message))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, process_message))
     logger.info("🤖 Bot started...")
     application.run_polling()
 
