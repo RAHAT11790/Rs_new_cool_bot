@@ -2,7 +2,7 @@ import os
 import re
 import logging
 import threading
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, ContextTypes, filters
 from flask import Flask
 
@@ -10,7 +10,6 @@ from flask import Flask
 BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 
 RS_USERNAMES = [None, None, None]
-FORCE_SUB_CHANNEL = None
 START_MESSAGE = "👋 Hello! I'm ready."
 START_PHOTO = None
 
@@ -57,30 +56,10 @@ def replace_all_usernames(text: str, new_usernames: list) -> str:
     return new_text
 
 # ========= States =========
-RS_WAIT, FORCE_WAIT, START_WAIT, PHOTO_WAIT = range(4)
+RS_WAIT, START_WAIT, PHOTO_WAIT = range(3)
 
 # ========= /start =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user = update.effective_user
-
-    # ForceSub check
-    if FORCE_SUB_CHANNEL:
-        try:
-            channel_username = FORCE_SUB_CHANNEL.split("t.me/")[-1].replace("/", "")
-            member = await context.bot.get_chat_member(f"@{channel_username}", user.id)
-            if member.status in ["left", "kicked"]:
-                keyboard = [[InlineKeyboardButton("✅ Join Channel", url=FORCE_SUB_CHANNEL)]]
-                reply_markup = InlineKeyboardMarkup(keyboard)
-                await update.message.reply_text(
-                    "❌ First join our channel to use the bot.",
-                    reply_markup=reply_markup
-                )
-                return
-        except Exception:
-            await update.message.reply_text("⚠️ Force Subscribe not set properly.")
-            return
-
-    # Show start message + photo
     if START_PHOTO:
         await update.message.reply_photo(photo=START_PHOTO, caption=START_MESSAGE)
     else:
@@ -96,20 +75,6 @@ async def setrs_receive(update, context):
     usernames = update.message.text.split()[:3]
     RS_USERNAMES = [_normalize_username(u) for u in usernames] + [None]*(3-len(usernames))
     await update.message.reply_text(f"✅ RS usernames set: {RS_USERNAMES}")
-    return ConversationHandler.END
-
-# ========= /forcesub =========
-async def forcesub_start(update, context):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Only Admin can use this command.")
-        return ConversationHandler.END
-    await update.message.reply_text("🔗 Send the channel link for Force Subscribe:")
-    return FORCE_WAIT
-
-async def forcesub_receive(update, context):
-    global FORCE_SUB_CHANNEL
-    FORCE_SUB_CHANNEL = update.message.text.strip()
-    await update.message.reply_text(f"✅ Force Subscribe channel set: {FORCE_SUB_CHANNEL}")
     return ConversationHandler.END
 
 # ========= /setstart =========
@@ -150,38 +115,32 @@ async def setphoto_receive(update, context):
 # ========= Message Handler =========
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
-    if hasattr(msg, 'forward_date') and msg.forward_date:
-        await msg.reply_text("❌ Forward না করে copy-paste করুন।")
-        return
-
     text = msg.text or msg.caption or ""
-    if not RS_USERNAMES[0]:
+    if not text.strip() or not RS_USERNAMES[0]:
         return
 
     new_text = replace_all_usernames(text, RS_USERNAMES)
+    
     if new_text != text:
-        if msg.text:
-            await msg.reply_text(new_text)
-        elif msg.caption:
-            if msg.photo:
-                await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
-            elif msg.video:
-                await msg.reply_video(msg.video.file_id, caption=new_text)
-            elif msg.document:
-                await msg.reply_document(msg.document.file_id, caption=new_text)
-            else:
+        try:
+            if msg.text:
                 await msg.reply_text(new_text)
+            elif msg.caption:
+                if msg.photo:
+                    await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
+                elif msg.video:
+                    await msg.reply_video(msg.video.file_id, caption=new_text)
+                elif msg.document:
+                    await msg.reply_document(msg.document.file_id, caption=new_text)
+                else:
+                    await msg.reply_text(new_text)
+        except Exception as e:
+            await msg.reply_text(f"📝 Text version:\n\n{new_text}")
 
 # ========= Conversation Handlers =========
 rs_conv = ConversationHandler(
     entry_points=[CommandHandler("set_rs", setrs_start)],
     states={RS_WAIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, setrs_receive)]},
-    fallbacks=[]
-)
-
-forcesub_conv = ConversationHandler(
-    entry_points=[CommandHandler("forcesub", forcesub_start)],
-    states={FORCE_WAIT: [MessageHandler(filters.TEXT & ~filters.COMMAND, forcesub_receive)]},
     fallbacks=[]
 )
 
@@ -202,19 +161,17 @@ def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(rs_conv)
-    application.add_handler(forcesub_conv)
     application.add_handler(setstart_conv)
     application.add_handler(setphoto_conv)
     application.add_handler(MessageHandler(
         filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL,
         process_message
     ))
-
     logger.info("🤖 Bot started...")
     application.run_polling()
 
 # ========= Main =========
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 10000))
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT, debug=False)).start()
+    threading.Thread(target=lambda: Flask(__name__).run(host="0.0.0.0", port=PORT, debug=False)).start()
     run_bot()
