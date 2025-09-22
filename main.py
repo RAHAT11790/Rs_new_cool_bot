@@ -44,16 +44,21 @@ def _normalize_username(u: str) -> str:
 def replace_all_usernames(text: str, new_usernames: list) -> str:
     if not text or not new_usernames or all(u is None for u in new_usernames):
         return text
+
     usernames = re.findall(
         r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}',
         text, flags=re.IGNORECASE
     )
+
     if not usernames:
         return text
 
+    # Sequential replacement (no .index(), avoids ValueError)
+    replaced_count = 0
     def replacer(match):
-        index = usernames.index(match.group(0)) % len(new_usernames)
-        replacement = new_usernames[index]
+        nonlocal replaced_count
+        replacement = new_usernames[replaced_count % len(new_usernames)]
+        replaced_count += 1
         if match.group(0).startswith('@'):
             return f"@{replacement}"
         elif match.group(0).startswith('t.me/'):
@@ -72,9 +77,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Welcome to HINDI ANIME CHANNEL BOT\n\n"
         "✅ How to use:\n"
-        "1. Set usernames: /set_rs like CARTOONFUNNY01 CARTOONFUNNY02 CARTOONFUNNY03\n"
+        "1. Set usernames: /set_rs username1 username2 username3\n"
         "2. COPY-PASTE messages here (not forward)\n"
-        "3. Batch update in channel: /batch_update @channelusername 50"
+        "3. Forwarded messages are also supported\n"
+        "4. Batch update in channel: /batch_update @channelusername 50"
     )
 
 async def set_rs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -100,13 +106,11 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text.strip() and not msg.photo and not msg.video and not msg.document:
         return
 
-    # Username replace
     new_text = replace_all_usernames(text, RS_USERNAMES)
 
     try:
-        # Forwarded message detection
-        if msg.forward_from or msg.forward_from_chat:
-            # Forwarded → username replace + reply/repost
+        # Forwarded message or normal message
+        if msg.forward_from or msg.forward_from_chat or True:
             if msg.text:
                 await msg.reply_text(new_text)
             elif msg.caption:
@@ -122,24 +126,6 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await msg.reply_voice(msg.voice.file_id, caption=new_text)
                 elif msg.sticker:
                     await msg.reply_sticker(msg.sticker.file_id)
-            return
-
-        # Normal copy/paste
-        if msg.text:
-            await msg.reply_text(new_text)
-        elif msg.caption:
-            if msg.photo:
-                await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
-            elif msg.video:
-                await msg.reply_video(msg.video.file_id, caption=new_text)
-            elif msg.document:
-                await msg.reply_document(msg.document.file_id, caption=new_text)
-            elif msg.audio:
-                await msg.reply_audio(msg.audio.file_id, caption=new_text)
-            elif msg.voice:
-                await msg.reply_voice(msg.voice.file_id, caption=new_text)
-            elif msg.sticker:
-                await msg.reply_sticker(msg.sticker.file_id)
     except Exception as e:
         logger.error(f"Repost failed: {e}")
         await msg.reply_text(f"📝 Text version:\n\n{new_text}")
