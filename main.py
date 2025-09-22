@@ -72,7 +72,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Welcome to HINDI ANIME CHANNEL BOT\n\n"
         "✅ How to use:\n"
-        "1. Set usernames: /set_rs username1 username2 username3\n"
+        "1. Set usernames: /set_rs like CARTOONFUNNY01 CARTOONFUNNY02 CARTOONFUNNY03\n"
         "2. COPY-PASTE messages here (not forward)\n"
         "3. Batch update in channel: /batch_update @channelusername 50"
     )
