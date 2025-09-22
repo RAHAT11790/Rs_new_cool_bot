@@ -6,19 +6,24 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from flask import Flask
 import threading
+from telegram import InputMediaPhoto, InputMediaDocument
 
+# Logging সেটআপ
 logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Environment Variables
 TOKEN = os.environ.get('BOT_TOKEN', '8257089548:AAG3hpoUToom6a71peYep-DBfgPiKU3wPGE')
 RS_USERNAMES = [None, None, None]
 
+# Flask সেটআপ
 app_flask = Flask(__name__)
 
 @app_flask.route('/health')
 def health():
     return 'OK'
 
+# হেল্পার ফাংশন
 def _normalize_username(u: str) -> str:
     if not u:
         return u
@@ -47,17 +52,31 @@ def replace_all_usernames(text: str, new_usernames: list) -> str:
             return f"https://t.me/{new_user}"
     return re.sub(pattern, replace_match, text, flags=re.IGNORECASE)
 
+# কমান্ড হ্যান্ডলার
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        """🤖 Welcome to HINDI ANIME CHANNEL BOT
+    photo_url = "https://example.com/welcome.jpg"  # তোমার ছবির URL দাও
+    caption = """🤖 Welcome to HINDI ANIME CHANNEL BOT
 
-        ✅ How to use:
-        1. Set usernames: /set_rs username1 username2 username3
-        2. COPY-PASTE messages here
-        3. Batch update: /batch_update @channelusername 50
+    ✅ How to use:
+    1. Set usernames: /set_rs username1 username2 username3
+    2. Upload or forward any message/photo/file here
+    3. Batch update: /batch_update @channelusername 50
 
-        ❌ Don't forward, COPY-PASTE instead"""
-    )
+    ✅ Username replacement examples:
+    - @old1 → @username1
+    - t.me/old2 → t.me/username2
+    - https://t.me/old3 → https://t.me/username3
+
+    ❌ Don't forward manually, use /start"""
+    
+    if photo_url:
+        await update.message.reply_photo(
+            photo=photo_url,
+            caption=caption,
+            parse_mode='HTML'
+        )
+    else:
+        await update.message.reply_text(caption)
 
 async def set_rs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RS_USERNAMES
@@ -103,18 +122,36 @@ async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 break
             for msg in messages:
                 processed += 1
-                text = msg.text or msg.caption or ""
-                new_text = replace_all_usernames(text, RS_USERNAMES)
-                if new_text != text:
+                # টেক্সট বা ক্যাপশন প্রসেস
+                text_to_edit = msg.text or msg.caption or ""
+                new_text = replace_all_usernames(text_to_edit, RS_USERNAMES)
+                if new_text != text_to_edit:
                     try:
-                        if msg.text:
-                            await context.bot.edit_message_text(chat_id=channel, message_id=msg.message_id, text=new_text)
-                        elif msg.caption:
-                            await context.bot.edit_message_caption(chat_id=channel, message_id=msg.message_id, caption=new_text)
+                        if msg.photo and msg.caption:
+                            await context.bot.edit_message_caption(
+                                chat_id=channel,
+                                message_id=msg.message_id,
+                                caption=new_text,
+                                parse_mode='HTML'
+                            )
+                        elif msg.document and msg.caption:
+                            await context.bot.edit_message_caption(
+                                chat_id=channel,
+                                message_id=msg.message_id,
+                                caption=new_text,
+                                parse_mode='HTML'
+                            )
+                        elif msg.text:
+                            await context.bot.edit_message_text(
+                                chat_id=channel,
+                                message_id=msg.message_id,
+                                text=new_text,
+                                parse_mode='HTML'
+                            )
                         edited += 1
                     except Exception as e:
-                        logger.error(f"Edit failed: {e}")
-                await asyncio.sleep(0.5)
+                        logger.error(f"Edit failed for message {msg.message_id}: {e}")
+                await asyncio.sleep(0.5)  # FloodWait এড়ানোর জন্য
             offset_id += batch_count
         await update.message.reply_text(f"✅ Done. Processed: {processed}, Edited: {edited}")
     except Exception as e:
@@ -122,23 +159,44 @@ async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(f"❌ Failed: {e}")
 
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    global RS_USERNAMES
     msg = update.message
-    if hasattr(msg, 'forward_date') and msg.forward_date:
-        await msg.reply_text("❌ Don't forward, COPY-PASTE! Use /start")
-        return
-    text = msg.text or msg.caption or ""
-    if not RS_USERNAMES[0] or not text.strip():
-        return
-    new_text = replace_all_usernames(text, RS_USERNAMES)
-    if new_text != text:
-        await msg.reply_text(new_text)
+    # ফরোয়ার্ড করা বা মুল মেসেজ প্রসেস
+    if msg.forward_from or msg.forward_from_chat or not (msg.forward_from or msg.forward_from_chat):
+        try:
+            if msg.photo:
+                caption = msg.caption or ""
+                new_caption = replace_all_usernames(caption, RS_USERNAMES) if RS_USERNAMES[0] else caption
+                await msg.reply_photo(
+                    photo=msg.photo[-1].file_id,
+                    caption=new_caption,
+                    parse_mode='HTML'
+                )
+            elif msg.document:
+                caption = msg.caption or ""
+                new_caption = replace_all_usernames(caption, RS_USERNAMES) if RS_USERNAMES[0] else caption
+                await msg.reply_document(
+                    document=msg.document.file_id,
+                    caption=new_caption,
+                    parse_mode='HTML'
+                )
+            elif msg.text:
+                text = msg.text or ""
+                new_text = replace_all_usernames(text, RS_USERNAMES) if RS_USERNAMES[0] else text
+                await msg.reply_text(new_text, parse_mode='HTML')
+            else:
+                await msg.reply_text("✅ Content received and replicated!")
+        except Exception as e:
+            logger.error(f"Reply failed: {e}")
+            await msg.reply_text(f"❌ Error: {e}")
 
+# বট চালানো
 def run_bot():
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("set_rs", set_rs))
     application.add_handler(CommandHandler("batch_update", batch_update))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, process_message))
+    application.add_handler(MessageHandler(filters.PHOTO | filters.DOCUMENT | filters.TEXT & ~filters.COMMAND, process_message))
     logger.info("Bot started (polling)...")
     application.run_polling(timeout=60)
 
