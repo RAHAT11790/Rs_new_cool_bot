@@ -151,6 +151,7 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     new_text = replace_all_usernames(text, RS_USERNAMES)
+
     if new_text != text:
         try:
             if msg.text:
@@ -158,6 +159,7 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif msg.photo:
                 await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
             elif msg.video:
+                # Forwarded or normal video: send new copy with thumbnail
                 await msg.reply_video(
                     msg.video.file_id,
                     caption=new_text,
