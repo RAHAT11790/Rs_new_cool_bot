@@ -1,15 +1,16 @@
 import logging
 import re
 import asyncio
+import os
+import threading
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-from flask import Flask
-import threading
 
 # ============= Token setup =============
-TOKEN = "8257089548:AAG3hpoUToom6a71peYep-DBfgPiKU3wPGE"
+TOKEN = os.environ.get("8257089548:AAG3hpoUToom6a71peYep-DBfgPiKU3wPGE")  # Use Render secret environment variable
 
-# ============= Global username store ============
+# ============= Username storage ============
 RS_USERNAMES = [None, None, None]
 
 # ============= Logging ==========================
@@ -19,12 +20,12 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# ============= Flask Setup =================
+# ============= Flask setup =================
 app = Flask(__name__)
 
 @app.route('/health')
 def health():
-    return 'OK'
+    return "OK"
 
 # ============= Helper functions =================
 def _normalize_username(u: str) -> str:
@@ -40,39 +41,30 @@ def _normalize_username(u: str) -> str:
 def replace_all_usernames(text: str, new_usernames: list) -> str:
     if not text or not new_usernames or all(u is None for u in new_usernames):
         return text
-
-    usernames = re.findall(
-        r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}',
-        text, flags=re.IGNORECASE
-    )
+    usernames = re.findall(r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}', text, flags=re.IGNORECASE)
     if not usernames:
         return text
-
     def replacer(match):
         index = usernames.index(match.group(0)) % len(new_usernames)
         replacement = new_usernames[index]
         if match.group(0).startswith('@'):
-            return f'@{replacement}'
+            return f"@{replacement}"
         elif match.group(0).startswith('t.me/'):
-            return f't.me/{replacement}'
+            return f"t.me/{replacement}"
         else:
-            return f'https://t.me/{replacement}'
-
-    text = re.sub(
-        r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}',
-        replacer, text, flags=re.IGNORECASE
-    )
+            return f"https://t.me/{replacement}"
+    text = re.sub(r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}', replacer, text, flags=re.IGNORECASE)
     return text
 
 # ============= Commands =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    welcome_text = """🤖 Welcome to HINDI ANIME CHANNEL BOT
-
-✅ How to use:
-1. Set usernames: /set_rs username1 username2 username3
-2. COPY-PASTE messages here (not forward)
-3. Batch update in channel: /batch_update @channelusername 50"""
-    await update.message.reply_text(welcome_text)
+    await update.message.reply_text(
+        "🤖 Welcome to HINDI ANIME CHANNEL BOT\n\n"
+        "✅ How to use:\n"
+        "1. Set usernames: /set_rs username1 username2 username3\n"
+        "2. COPY-PASTE messages here (not forward)\n"
+        "3. Batch update in channel: /batch_update @channelusername 50"
+    )
 
 async def set_rs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RS_USERNAMES
@@ -83,9 +75,9 @@ async def set_rs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Usage: /set_rs username1 username2 username3 (up to 3 usernames)")
 
-# ==================== Superfast batch update ====================
-MAX_CONCURRENT = 10  # একসাথে 10 টি মেসেজ প্রসেস
-DELAY_BETWEEN_BATCHES = 1  # প্রতি batch পরে 1 সেকেন্ড ডিলে
+# ============= Batch update (Superfast) =================
+MAX_CONCURRENT = 10
+DELAY_BETWEEN_BATCHES = 1
 
 async def edit_single_message(bot, channel_id, msg, new_text):
     try:
@@ -97,15 +89,13 @@ async def edit_single_message(bot, channel_id, msg, new_text):
         logger.warning(f"Could not edit message {msg.message_id}: {e}")
 
 async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global RS_USERNAMES
     if not RS_USERNAMES[0]:
         await update.message.reply_text("❌ Please set at least one username using /set_rs")
         return
     if len(context.args) < 2:
         await update.message.reply_text("Usage: /batch_update @channelusername message_count")
         return
-
-    channel_username = context.args[0].lstrip('@')
+    channel_username = context.args[0].lstrip("@")
     try:
         total_count = int(context.args[1])
     except ValueError:
@@ -115,44 +105,42 @@ async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Max 2000 messages at a time")
         return
 
-    await update.message.reply_text(f"🔄 Starting superfast batch update for @{channel_username} ({total_count} messages)")
+    await update.message.reply_text(f"🔄 Starting batch update for @{channel_username} ({total_count} messages)")
 
     try:
         chat = await context.bot.get_chat(channel_username)
         channel_id = chat.id
-
         offset_id = 0
         batch_size = 100
         processed_count = 0
 
         while processed_count < total_count:
             batch_count = min(batch_size, total_count - processed_count)
-            messages = await context.bot.get_chat_history(channel_id, limit=batch_count, offset_id=offset_id)
+            messages = await context.bot.get_chat_history(channel_id, limit=batch_count, offset=offset_id)
             if not messages:
                 break
 
-            # Concurrently edit messages with limited concurrency
             sem = asyncio.Semaphore(MAX_CONCURRENT)
             async def safe_edit(msg):
                 async with sem:
                     text = msg.text or msg.caption or ""
                     new_text = replace_all_usernames(text, RS_USERNAMES)
                     await edit_single_message(context.bot, channel_id, msg, new_text)
-                    await asyncio.sleep(0.3)  # short delay to reduce flood wait
+                    await asyncio.sleep(0.3)
 
             await asyncio.gather(*[safe_edit(msg) for msg in messages])
 
             processed_count += batch_count
             offset_id += batch_count
-            await asyncio.sleep(DELAY_BETWEEN_BATCHES)  # batch delay
-            await update.message.reply_text(f"✅ Processed batch: {processed_count}/{total_count} messages")
+            await asyncio.sleep(DELAY_BETWEEN_BATCHES)
+            await update.message.reply_text(f"✅ Processed batch: {processed_count}/{total_count}")
 
-        await update.message.reply_text(f"✅ Superfast batch update complete! Processed {processed_count} messages in @{channel_username}")
+        await update.message.reply_text(f"✅ Batch update complete! {processed_count} messages processed.")
     except Exception as e:
         logger.error(f"Batch update failed: {e}")
-        await update.message.reply_text(f"❌ Batch update failed: {str(e)}")
+        await update.message.reply_text(f"❌ Batch update failed: {e}")
 
-# ============= Message handlers =================
+# ============= Message Handler =================
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     text = msg.text or msg.caption or ""
@@ -199,10 +187,8 @@ def run_bot():
     logger.info("🤖 Bot started (polling)...")
     application.run_polling(timeout=60)
 
-if __name__ == '__main__':
-    # Flask সার্ভার একটি থ্রেডে চালান
-    PORT = int(os.environ.get("PORT", 10000))  # Render auto PORT
-    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=PORT, debug=False))
+if __name__ == "__main__":
+    PORT = int(os.environ.get("PORT", 10000))
+    flask_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT, debug=False))
     flask_thread.start()
-    # বট চালান
     run_bot()
