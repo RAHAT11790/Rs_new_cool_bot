@@ -7,20 +7,22 @@ from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-# ================= Bot Token ===================
-TOKEN = os.environ.get("8257089548:AAG3hpoUToom6a71peYep-DBfgPiKU3wPGE")
-if not TOKEN:
-    raise Exception("❌ BOT_TOKEN environment variable not set! Please add it in Render Secrets.")
-
-# ================= Username storage ===================
-RS_USERNAMES = [None, None, None]
-
 # ================= Logging ===================
 logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     level=logging.INFO
 )
 logger = logging.getLogger(__name__)
+
+# ================= BOT TOKEN ===================
+TOKEN = os.environ.get("BOT_TOKEN")
+
+if not TOKEN:
+    logger.warning("❌ BOT_TOKEN environment variable not set! Please add it in Render Secrets.")
+    TOKEN = None  # safe fallback
+
+# ================= Username storage ===================
+RS_USERNAMES = [None, None, None]
 
 # ================= Flask setup ===================
 app = Flask(__name__)
@@ -190,6 +192,10 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ================= Run Bot and Flask ===================
 def run_bot():
+    if not TOKEN:
+        logger.warning("Bot is not starting because BOT_TOKEN is missing. Set it in Environment and restart.")
+        return
+
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("set_rs", set_rs))
@@ -206,4 +212,4 @@ if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 10000))
     flask_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT, debug=False))
     flask_thread.start()
-    run
+    run_bot()
