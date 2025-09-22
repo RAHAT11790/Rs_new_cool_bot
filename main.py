@@ -5,9 +5,10 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from flask import Flask
 import threading
+import os
 
 # ============= Token setup =============
-TOKEN = "8260956615:AAHZndn1iMmzuMJ_YZqCNxiiuVb53aRMLDo"  # নতুন টোকেন
+TOKEN = os.environ.get('BOT_TOKEN', '8257089548:AAG3hpoUToom6a71peYep-DBfgPiKU3wPGE')  # Environment variable থেকে নেওয়া
 
 # ============= Global username store ============
 RS_USERNAMES = [None, None, None]  # তিনটি ইউজারনেম স্টোর করা
@@ -40,40 +41,23 @@ def _normalize_username(u: str) -> str:
 def replace_all_usernames(text: str, new_usernames: list) -> str:
     if not text or not new_usernames or all(u is None for u in new_usernames):
         return text
-    # Find all usernames in text
-    usernames = re.findall(r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}', text, flags=re.IGNORECASE)
+    pattern = r'(@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32})'
+    def replace_match(match):
+        orig = match.group(0)
+        index = usernames.index(match.group(0)) % len([u for u in new_usernames if u])
+        new_user = next((u for u in new_usernames if u), None)
+        if not new_user:
+            return orig
+        if orig.startswith("@"):
+            return f"@{new_user}"
+        elif orig.lower().startswith("t.me/"):
+            return f"t.me/{new_user}"
+        else:
+            return f"https://t.me/{new_user}"
+    usernames = re.findall(pattern, text, flags=re.IGNORECASE)
     if not usernames:
         return text
-    
-    # Check if any username matches any set RS_USERNAME
-    match_found = False
-    for username in usernames:
-        normalized_user = _normalize_username(username)
-        if normalized_user in [u for u in new_usernames if u]:
-            match_found = True
-            break
-    
-    if match_found:
-        return text  # If match found, no change
-    
-    # Replace usernames based on count
-    if len(usernames) >= 3 and new_usernames[0] and new_usernames[1] and new_usernames[2]:  # If 3+ usernames and all three are set
-        text = re.sub(r'(@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32})', 
-                      lambda m: f'@{new_usernames[0]}' if m.group(0).startswith('@') else 
-                                f't.me/{new_usernames[1]}' if m.group(0).startswith('t.me/') else 
-                                f'https://t.me/{new_usernames[2]}', 
-                      text, count=3, flags=re.IGNORECASE)
-    elif len(usernames) >= 2 and new_usernames[0] and new_usernames[1]:  # If 2+ usernames and first two are set
-        text = re.sub(r'(@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32})', 
-                      lambda m: f'@{new_usernames[0]}' if m.group(0).startswith('@') else 
-                                f't.me/{new_usernames[1]}', 
-                      text, count=2, flags=re.IGNORECASE)
-    elif len(usernames) >= 1 and new_usernames[0]:  # If 1 username and first is set
-        text = re.sub(r'(@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32})', 
-                      lambda m: f'@{new_usernames[0]}', 
-                      text, count=1, flags=re.IGNORECASE)
-    
-    return text
+    return re.sub(pattern, replace_match, text, count=len(usernames), flags=re.IGNORECASE)
 
 # ============= Commands =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -91,8 +75,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def set_rs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RS_USERNAMES
     if len(context.args) >= 1 and len(context.args) <= 3:
-        RS_USERNAMES = [_normalize_username(u) for u in context.args[:3]]  # First 3 usernames
-        RS_USERNAMES += [None] * (3 - len(context.args))  # Fill with None if less than 3
+        RS_USERNAMES = [_normalize_username(u) for u in context.args[:3]]
+        RS_USERNAMES += [None] * (3 - len(context.args))
         await update.message.reply_text(f"✅ RS usernames set: @{RS_USERNAMES[0]}, @{RS_USERNAMES[1]}, @{RS_USERNAMES[2]}")
         logger.info(f"RS usernames set to {RS_USERNAMES} by {update.effective_user.id}")
     else:
@@ -114,7 +98,7 @@ async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ message_count must be a number (e.g., 50)")
         return
     
-    if total_count > 2000:  # সর্বোচ্চ 2000 মেসেজ লিমিট
+    if total_count > 2000:
         await update.message.reply_text("❌ Max 2000 messages at a time to avoid rate limits")
         return
     
@@ -124,9 +108,17 @@ async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat = await context.bot.get_chat(channel_username)
         channel_id = chat.id
         
+        # Check bot permissions
+        me = await context.bot.get_me()
+        member = await context.bot.get_chat_member(channel_id, me.id)
+        if member.status not in ("administrator", "creator") or not member.can_edit_messages:
+            await update.message.reply_text("❌ Bot must be admin with edit rights in the channel.")
+            return
+        
         offset_id = 0
         batch_size = 100
         processed_count = 0
+        edited_count = 0
         
         while processed_count < total_count:
             batch_count = min(batch_size, total_count - processed_count)
@@ -137,20 +129,28 @@ async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if not messages:
                 break
                 
-            updated_count = 0
             for msg in messages:
+                processed_count += 1
                 text = msg.text or msg.caption or ""
+                if not text.strip():
+                    continue
+                
                 new_text = replace_all_usernames(text, RS_USERNAMES)
-                full_text = f"📝 Updated from old message:\n\n{new_text}"
-                await context.bot.send_message(chat_id=channel_id, text=full_text)
-                updated_count += 1
-                await asyncio.sleep(3)  # Rate limit এড়াতে
+                if new_text != text:
+                    try:
+                        if msg.text:
+                            await context.bot.edit_message_text(chat_id=channel_id, message_id=msg.message_id, text=new_text)
+                        elif msg.caption:
+                            await context.bot.edit_message_caption(chat_id=channel_id, message_id=msg.message_id, caption=new_text)
+                        edited_count += 1
+                    except Exception as e:
+                        logger.error(f"Edit failed for msg {msg.message_id}: {e}")
+                await asyncio.sleep(1)  # Rate limit এড়াতে
             
-            processed_count += batch_count
             offset_id += batch_count
-            await update.message.reply_text(f"✅ Processed batch: {processed_count}/{total_count} messages updated.")
+            await update.message.reply_text(f"✅ Processed batch: {processed_count}/{total_count} messages, edited {edited_count}.")
         
-        await update.message.reply_text(f"✅ Batch update complete! Processed {processed_count} messages in @{channel_username}.")
+        await update.message.reply_text(f"✅ Batch update complete! Processed {processed_count} messages, edited {edited_count} in @{channel_username}.")
     except Exception as e:
         logger.error(f"Batch update failed: {e}")
         await update.message.reply_text(f"❌ Batch update failed: {str(e)}")
@@ -211,7 +211,7 @@ def run_bot():
 
 if __name__ == '__main__':
     # Flask সার্ভার একটি থ্রেডে চালান
-    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=10000, debug=False))
+    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)), debug=False))
     flask_thread.start()
     # বট চালান
     run_bot()
