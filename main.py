@@ -16,7 +16,6 @@ logger = logging.getLogger(__name__)
 
 # ================= BOT TOKEN ===================
 TOKEN = os.environ.get("BOT_TOKEN")
-
 if not TOKEN:
     logger.warning("❌ BOT_TOKEN environment variable not set! Please add it in Render Secrets.")
     TOKEN = None  # safe fallback
@@ -89,88 +88,43 @@ async def set_rs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("Usage: /set_rs username1 username2 username3 (up to 3 usernames)")
 
-# ================= Batch update ===================
-MAX_CONCURRENT = 10
-DELAY_BETWEEN_BATCHES = 1
-
-async def edit_single_message(bot, channel_id, msg, new_text):
-    try:
-        if msg.text:
-            await bot.edit_message_text(chat_id=channel_id, message_id=msg.message_id, text=new_text)
-        elif msg.caption:
-            await bot.edit_message_caption(chat_id=channel_id, message_id=msg.message_id, caption=new_text)
-    except Exception as e:
-        logger.warning(f"Could not edit message {msg.message_id}: {e}")
-
-async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not RS_USERNAMES[0]:
-        await update.message.reply_text("❌ Please set at least one username using /set_rs")
-        return
-    if len(context.args) < 2:
-        await update.message.reply_text("Usage: /batch_update @channelusername message_count")
-        return
-
-    channel_username = context.args[0].lstrip("@")
-    try:
-        total_count = int(context.args[1])
-    except ValueError:
-        await update.message.reply_text("❌ message_count must be a number")
-        return
-
-    if total_count > 2000:
-        await update.message.reply_text("❌ Max 2000 messages at a time")
-        return
-
-    await update.message.reply_text(f"🔄 Starting batch update for @{channel_username} ({total_count} messages)")
-
-    try:
-        chat = await context.bot.get_chat(channel_username)
-        channel_id = chat.id
-        offset_id = 0
-        batch_size = 100
-        processed_count = 0
-
-        while processed_count < total_count:
-            batch_count = min(batch_size, total_count - processed_count)
-            messages = await context.bot.get_chat_history(channel_id, limit=batch_count, offset=offset_id)
-            if not messages:
-                break
-
-            sem = asyncio.Semaphore(MAX_CONCURRENT)
-
-            async def safe_edit(msg):
-                async with sem:
-                    text = msg.text or msg.caption or ""
-                    new_text = replace_all_usernames(text, RS_USERNAMES)
-                    await edit_single_message(context.bot, channel_id, msg, new_text)
-                    await asyncio.sleep(0.3)
-
-            await asyncio.gather(*[safe_edit(msg) for msg in messages])
-
-            processed_count += batch_count
-            offset_id += batch_count
-            await asyncio.sleep(DELAY_BETWEEN_BATCHES)
-            await update.message.reply_text(f"✅ Processed batch: {processed_count}/{total_count}")
-
-        await update.message.reply_text(f"✅ Batch update complete! {processed_count} messages processed.")
-    except Exception as e:
-        logger.error(f"Batch update failed: {e}")
-        await update.message.reply_text(f"❌ Batch update failed: {e}")
-
 # ================= Message Handler ===================
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     text = msg.text or msg.caption or ""
+
     if not RS_USERNAMES[0]:
         await msg.reply_text("❌ Please set at least one username using /set_rs")
         return
+
     if not text.strip() and not msg.photo and not msg.video and not msg.document:
         return
 
+    # Username replace
     new_text = replace_all_usernames(text, RS_USERNAMES)
+
     try:
-        if msg.forward_from_chat:
-            await msg.reply_text(f"📤 Forwarded message processed:\n\n{new_text}")
+        # Forwarded message detection
+        if msg.forward_from or msg.forward_from_chat:
+            # Forwarded → username replace + reply/repost
+            if msg.text:
+                await msg.reply_text(new_text)
+            elif msg.caption:
+                if msg.photo:
+                    await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
+                elif msg.video:
+                    await msg.reply_video(msg.video.file_id, caption=new_text)
+                elif msg.document:
+                    await msg.reply_document(msg.document.file_id, caption=new_text)
+                elif msg.audio:
+                    await msg.reply_audio(msg.audio.file_id, caption=new_text)
+                elif msg.voice:
+                    await msg.reply_voice(msg.voice.file_id, caption=new_text)
+                elif msg.sticker:
+                    await msg.reply_sticker(msg.sticker.file_id)
+            return
+
+        # Normal copy/paste
         if msg.text:
             await msg.reply_text(new_text)
         elif msg.caption:
@@ -199,7 +153,6 @@ def run_bot():
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("set_rs", set_rs))
-    application.add_handler(CommandHandler("batch_update", batch_update))
     application.add_handler(MessageHandler(
         filters.TEXT | filters.PHOTO | filters.VIDEO | filters.AUDIO |
         filters.Document.ALL | filters.VOICE | filters.Sticker.ALL,
