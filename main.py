@@ -7,23 +7,29 @@ from flask import Flask
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
-# Token from environment
+# ================= Bot Token ===================
 TOKEN = os.environ.get("8257089548:AAG3hpoUToom6a71peYep-DBfgPiKU3wPGE")
+if not TOKEN:
+    raise Exception("❌ BOT_TOKEN environment variable not set! Please add it in Render Secrets.")
 
-# Usernames storage
+# ================= Username storage ===================
 RS_USERNAMES = [None, None, None]
 
-# Logging
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
+# ================= Logging ===================
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
 logger = logging.getLogger(__name__)
 
-# Flask setup
+# ================= Flask setup ===================
 app = Flask(__name__)
+
 @app.route('/health')
 def health():
     return "OK"
 
-# Helper functions
+# ================= Helper functions ===================
 def _normalize_username(u: str) -> str:
     if not u:
         return u
@@ -37,9 +43,13 @@ def _normalize_username(u: str) -> str:
 def replace_all_usernames(text: str, new_usernames: list) -> str:
     if not text or not new_usernames or all(u is None for u in new_usernames):
         return text
-    usernames = re.findall(r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}', text, flags=re.IGNORECASE)
+    usernames = re.findall(
+        r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}',
+        text, flags=re.IGNORECASE
+    )
     if not usernames:
         return text
+
     def replacer(match):
         index = usernames.index(match.group(0)) % len(new_usernames)
         replacement = new_usernames[index]
@@ -49,10 +59,14 @@ def replace_all_usernames(text: str, new_usernames: list) -> str:
             return f"t.me/{replacement}"
         else:
             return f"https://t.me/{replacement}"
-    text = re.sub(r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}', replacer, text, flags=re.IGNORECASE)
+
+    text = re.sub(
+        r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}',
+        replacer, text, flags=re.IGNORECASE
+    )
     return text
 
-# Commands
+# ================= Commands ===================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🤖 Welcome to HINDI ANIME CHANNEL BOT\n\n"
@@ -67,11 +81,13 @@ async def set_rs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if 1 <= len(context.args) <= 3:
         RS_USERNAMES = [_normalize_username(u) for u in context.args[:3]]
         RS_USERNAMES += [None] * (3 - len(context.args))
-        await update.message.reply_text(f"✅ RS usernames set: @{RS_USERNAMES[0]}, @{RS_USERNAMES[1]}, @{RS_USERNAMES[2]}")
+        await update.message.reply_text(
+            f"✅ RS usernames set: @{RS_USERNAMES[0]}, @{RS_USERNAMES[1]}, @{RS_USERNAMES[2]}"
+        )
     else:
         await update.message.reply_text("Usage: /set_rs username1 username2 username3 (up to 3 usernames)")
 
-# Batch update
+# ================= Batch update ===================
 MAX_CONCURRENT = 10
 DELAY_BETWEEN_BATCHES = 1
 
@@ -91,45 +107,55 @@ async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if len(context.args) < 2:
         await update.message.reply_text("Usage: /batch_update @channelusername message_count")
         return
+
     channel_username = context.args[0].lstrip("@")
     try:
         total_count = int(context.args[1])
     except ValueError:
         await update.message.reply_text("❌ message_count must be a number")
         return
+
     if total_count > 2000:
         await update.message.reply_text("❌ Max 2000 messages at a time")
         return
+
     await update.message.reply_text(f"🔄 Starting batch update for @{channel_username} ({total_count} messages)")
+
     try:
         chat = await context.bot.get_chat(channel_username)
         channel_id = chat.id
         offset_id = 0
         batch_size = 100
         processed_count = 0
+
         while processed_count < total_count:
             batch_count = min(batch_size, total_count - processed_count)
             messages = await context.bot.get_chat_history(channel_id, limit=batch_count, offset=offset_id)
             if not messages:
                 break
+
             sem = asyncio.Semaphore(MAX_CONCURRENT)
+
             async def safe_edit(msg):
                 async with sem:
                     text = msg.text or msg.caption or ""
                     new_text = replace_all_usernames(text, RS_USERNAMES)
                     await edit_single_message(context.bot, channel_id, msg, new_text)
                     await asyncio.sleep(0.3)
+
             await asyncio.gather(*[safe_edit(msg) for msg in messages])
+
             processed_count += batch_count
             offset_id += batch_count
             await asyncio.sleep(DELAY_BETWEEN_BATCHES)
             await update.message.reply_text(f"✅ Processed batch: {processed_count}/{total_count}")
+
         await update.message.reply_text(f"✅ Batch update complete! {processed_count} messages processed.")
     except Exception as e:
         logger.error(f"Batch update failed: {e}")
         await update.message.reply_text(f"❌ Batch update failed: {e}")
 
-# Message handler
+# ================= Message Handler ===================
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     text = msg.text or msg.caption or ""
@@ -138,6 +164,7 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if not text.strip() and not msg.photo and not msg.video and not msg.document:
         return
+
     new_text = replace_all_usernames(text, RS_USERNAMES)
     try:
         if msg.forward_from_chat:
@@ -161,7 +188,7 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Repost failed: {e}")
         await msg.reply_text(f"📝 Text version:\n\n{new_text}")
 
-# Run Bot and Flask
+# ================= Run Bot and Flask ===================
 def run_bot():
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
@@ -179,5 +206,4 @@ if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 10000))
     flask_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT, debug=False))
     flask_thread.start()
-    run_bot()
-``
+    run
