@@ -150,29 +150,40 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text.strip() or not RS_USERNAMES[0]:
         return
 
+    # Replace usernames and t.me links
     new_text = replace_all_usernames(text, RS_USERNAMES)
+    if new_text == text:
+        return
 
-    if new_text != text:
-        try:
-            if msg.text:
-                await msg.reply_text(new_text)
-            elif msg.photo:
-                await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
-            elif msg.video:
-                # Forwarded or normal video: send new copy with thumbnail
+    try:
+        # Text
+        if msg.text:
+            await msg.reply_text(new_text)
+        # Photo
+        elif msg.photo:
+            await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
+        # Video
+        elif msg.video:
+            # Only apply thumbnail if bot/user uploaded video
+            if hasattr(msg, 'forward_date') and msg.forward_date:
+                await msg.reply_video(msg.video.file_id, caption=new_text)
+            else:
                 await msg.reply_video(
                     msg.video.file_id,
                     caption=new_text,
                     thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
                 )
-            elif msg.document:
-                await msg.reply_document(msg.document.file_id, caption=new_text)
-            elif msg.audio:
-                await msg.reply_audio(msg.audio.file_id, caption=new_text)
-            elif msg.voice:
-                await msg.reply_voice(msg.voice.file_id, caption=new_text)
-        except Exception as e:
-            logger.error(f"Reply failed: {e}")
+        # Document
+        elif msg.document:
+            await msg.reply_document(msg.document.file_id, caption=new_text)
+        # Audio
+        elif msg.audio:
+            await msg.reply_audio(msg.audio.file_id, caption=new_text)
+        # Voice
+        elif msg.voice:
+            await msg.reply_voice(msg.voice.file_id, caption=new_text)
+    except Exception as e:
+        logger.error(f"Reply failed: {e}")
 
 # ========= Conversation Handlers =========
 rs_conv = ConversationHandler(
@@ -215,5 +226,5 @@ def run_bot():
 # ========= Main =========
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 10000))
-    threading.Thread(target=lambda: Flask(__name__).run(host="0.0.0.0", port=PORT, debug=False)).start()
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT, debug=False)).start()
     run_bot()
