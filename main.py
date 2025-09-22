@@ -112,7 +112,7 @@ async def setphoto_receive(update, context):
         return PHOTO_WAIT
     return ConversationHandler.END
 
-# ========= Message Handler =========
+# ========= Message Handler (Text only) =========
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
     text = msg.text or msg.caption or ""
@@ -123,19 +123,10 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if new_text != text:
         try:
-            if msg.text:
-                await msg.reply_text(new_text)
-            elif msg.caption:
-                if msg.photo:
-                    await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
-                elif msg.video:
-                    await msg.reply_video(msg.video.file_id, caption=new_text)
-                elif msg.document:
-                    await msg.reply_document(msg.document.file_id, caption=new_text)
-                else:
-                    await msg.reply_text(new_text)
+            # শুধু text reply করবে, media/forwarded ignore
+            await msg.reply_text(new_text)
         except Exception as e:
-            await msg.reply_text(f"📝 Text version:\n\n{new_text}")
+            logger.error(f"Reply failed: {e}")
 
 # ========= Conversation Handlers =========
 rs_conv = ConversationHandler(
@@ -163,10 +154,7 @@ def run_bot():
     application.add_handler(rs_conv)
     application.add_handler(setstart_conv)
     application.add_handler(setphoto_conv)
-    application.add_handler(MessageHandler(
-        filters.TEXT | filters.PHOTO | filters.VIDEO | filters.Document.ALL,
-        process_message
-    ))
+    application.add_handler(MessageHandler(filters.TEXT, process_message))
     logger.info("🤖 Bot started...")
     application.run_polling()
 
