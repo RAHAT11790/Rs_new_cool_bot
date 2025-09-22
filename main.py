@@ -3,7 +3,10 @@ import re
 import logging
 import threading
 from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ConversationHandler, ContextTypes, filters
+from telegram.ext import (
+    Application, CommandHandler, MessageHandler, ConversationHandler,
+    ContextTypes, filters
+)
 from flask import Flask
 
 # ========= Config =========
@@ -11,6 +14,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN", "")
 RS_USERNAMES = [None, None, None]
 START_MESSAGE = "👋 Hello! I'm ready."
 START_PHOTO = None
+COVER_THUMBNAIL = None
 ADMIN_ID = 6621572366
 
 # ========= Logging =========
@@ -52,7 +56,7 @@ def replace_all_usernames(text: str, new_usernames: list) -> str:
     return new_text
 
 # ========= States =========
-RS_WAIT, START_WAIT, PHOTO_WAIT = range(3)
+RS_WAIT, START_WAIT, PHOTO_WAIT, COVER_WAIT = range(4)
 
 # ========= /start =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -108,6 +112,37 @@ async def setphoto_receive(update, context):
         return PHOTO_WAIT
     return ConversationHandler.END
 
+# ========= /set_cover =========
+async def set_cover_start(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Only Admin can use this command.")
+        return ConversationHandler.END
+    await update.message.reply_text("📸 Send a photo to use as video thumbnail:")
+    return COVER_WAIT
+
+async def set_cover_receive(update, context):
+    global COVER_THUMBNAIL
+    if update.message.photo:
+        COVER_THUMBNAIL = update.message.photo[-1].file_id
+        await update.message.reply_text("✅ Video thumbnail updated!")
+    elif update.message.text:
+        COVER_THUMBNAIL = update.message.text.strip()
+        await update.message.reply_text("✅ Video thumbnail updated from link!")
+    else:
+        await update.message.reply_text("⚠️ Invalid input. Send a photo or valid link.")
+        return COVER_WAIT
+    return ConversationHandler.END
+
+# ========= /show_cover =========
+async def show_cover(update, context):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("❌ Only Admin can use this command.")
+        return
+    if COVER_THUMBNAIL:
+        await update.message.reply_photo(COVER_THUMBNAIL, caption="📸 Current video thumbnail cover")
+    else:
+        await update.message.reply_text("⚠️ No cover thumbnail set yet.")
+
 # ========= Message handler =========
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg = update.message
@@ -123,7 +158,11 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elif msg.photo:
                 await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
             elif msg.video:
-                await msg.reply_video(msg.video.file_id, caption=new_text)
+                await msg.reply_video(
+                    msg.video.file_id,
+                    caption=new_text,
+                    thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
+                )
             elif msg.document:
                 await msg.reply_document(msg.document.file_id, caption=new_text)
             elif msg.audio:
@@ -152,6 +191,12 @@ setphoto_conv = ConversationHandler(
     fallbacks=[]
 )
 
+setcover_conv = ConversationHandler(
+    entry_points=[CommandHandler("set_cover", set_cover_start)],
+    states={COVER_WAIT: [MessageHandler(filters.PHOTO | (filters.TEXT & ~filters.COMMAND), set_cover_receive)]},
+    fallbacks=[]
+)
+
 # ========= Run Bot =========
 def run_bot():
     application = Application.builder().token(BOT_TOKEN).build()
@@ -159,6 +204,8 @@ def run_bot():
     application.add_handler(rs_conv)
     application.add_handler(setstart_conv)
     application.add_handler(setphoto_conv)
+    application.add_handler(setcover_conv)
+    application.add_handler(CommandHandler("show_cover", show_cover))
     application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, process_message))
     logger.info("🤖 Bot started...")
     application.run_polling()
