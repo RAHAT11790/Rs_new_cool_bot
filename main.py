@@ -39,11 +39,9 @@ def _normalize_username(u: str) -> str:
 def replace_all_usernames(text: str, new_usernames: list) -> str:
     if not text or not new_usernames or all(u is None for u in new_usernames):
         return text
-
     usernames = re.findall(r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}', text, flags=re.IGNORECASE)
     if not usernames:
         return text
-
     new_text = text
     for i, username in enumerate(usernames[:3]):
         if i < len(new_usernames) and new_usernames[i]:
@@ -118,12 +116,9 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = msg.text or msg.caption or ""
     if not text.strip() or not RS_USERNAMES[0]:
         return
-
     new_text = replace_all_usernames(text, RS_USERNAMES)
-    
     if new_text != text:
         try:
-            # শুধু text reply করবে, media/forwarded ignore
             await msg.reply_text(new_text)
         except Exception as e:
             logger.error(f"Reply failed: {e}")
