@@ -1,29 +1,32 @@
-import os
+import logging
 import re
 import asyncio
-import logging
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from flask import Flask
 import threading
-from telegram import InputMediaPhoto, InputMediaDocument
 
-# Logging সেটআপ
-logging.basicConfig(format="%(asctime)s - %(name)s - %(levelname)s - %(message)s", level=logging.INFO)
-logger = logging.getLogger(__name__)
+# ============= Token setup =============
+TOKEN = "8257089548:AAG3hpoUToom6a71peYep-DBfgPiKU3wPGE"
 
-# Environment Variables
-TOKEN = os.environ.get('BOT_TOKEN', '8257089548:AAG3hpoUToom6a71peYep-DBfgPiKU3wPGE')
+# ============= Global username store ============
 RS_USERNAMES = [None, None, None]
 
-# Flask সেটআপ
-app_flask = Flask(__name__)
+# ============= Logging ==========================
+logging.basicConfig(
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+    level=logging.INFO
+)
+logger = logging.getLogger(__name__)
 
-@app_flask.route('/health')
+# ============= Flask Setup =================
+app = Flask(__name__)
+
+@app.route('/health')
 def health():
     return 'OK'
 
-# হেল্পার ফাংশন
+# ============= Helper functions =================
 def _normalize_username(u: str) -> str:
     if not u:
         return u
@@ -37,170 +40,169 @@ def _normalize_username(u: str) -> str:
 def replace_all_usernames(text: str, new_usernames: list) -> str:
     if not text or not new_usernames or all(u is None for u in new_usernames):
         return text
-    pattern = r'(@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32})'
-    def replace_match(match):
-        orig = match.group(0)
-        index = [i for i, u in enumerate(new_usernames) if u is not None].pop(0) if any(u is not None for u in new_usernames) else 0
-        new_user = new_usernames[index % len([u for u in new_usernames if u])]
-        if not new_user:
-            return orig
-        if orig.startswith("@"):
-            return f"@{new_user}"
-        elif orig.lower().startswith("t.me/"):
-            return f"t.me/{new_user}"
+
+    usernames = re.findall(
+        r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}',
+        text, flags=re.IGNORECASE
+    )
+    if not usernames:
+        return text
+
+    def replacer(match):
+        index = usernames.index(match.group(0)) % len(new_usernames)
+        replacement = new_usernames[index]
+        if match.group(0).startswith('@'):
+            return f'@{replacement}'
+        elif match.group(0).startswith('t.me/'):
+            return f't.me/{replacement}'
         else:
-            return f"https://t.me/{new_user}"
-    return re.sub(pattern, replace_match, text, flags=re.IGNORECASE)
+            return f'https://t.me/{replacement}'
 
-# কমান্ড হ্যান্ডলার
+    text = re.sub(
+        r'@[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}|https?://(www\.)?t\.me/[a-zA-Z0-9_]{1,32}',
+        replacer, text, flags=re.IGNORECASE
+    )
+    return text
+
+# ============= Commands =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    photo_url = "https://example.com/welcome.jpg"  # তোমার ছবির URL দাও
-    caption = """🤖 Welcome to HINDI ANIME CHANNEL BOT
+    welcome_text = """🤖 Welcome to HINDI ANIME CHANNEL BOT
 
-    ✅ How to use:
-    1. Set usernames: /set_rs username1 username2 username3
-    2. Upload or forward any message/photo/file here
-    3. Batch update: /batch_update @channelusername 50
-
-    ✅ Username replacement examples:
-    - @old1 → @username1
-    - t.me/old2 → t.me/username2
-    - https://t.me/old3 → https://t.me/username3
-
-    ❌ Don't forward manually, use /start"""
-    
-    if photo_url:
-        await update.message.reply_photo(
-            photo=photo_url,
-            caption=caption,
-            parse_mode='HTML'
-        )
-    else:
-        await update.message.reply_text(caption)
+✅ How to use:
+1. Set usernames: /set_rs username1 username2 username3
+2. COPY-PASTE messages here (not forward)
+3. Batch update in channel: /batch_update @channelusername 50"""
+    await update.message.reply_text(welcome_text)
 
 async def set_rs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RS_USERNAMES
-    if len(context.args) >= 1 and len(context.args) <= 3:
+    if 1 <= len(context.args) <= 3:
         RS_USERNAMES = [_normalize_username(u) for u in context.args[:3]]
         RS_USERNAMES += [None] * (3 - len(context.args))
-        await update.message.reply_text(f"✅ RS set: @{RS_USERNAMES[0]}, @{RS_USERNAMES[1]}, @{RS_USERNAMES[2]}")
-        logger.info(f"RS set to {RS_USERNAMES}")
+        await update.message.reply_text(f"✅ RS usernames set: @{RS_USERNAMES[0]}, @{RS_USERNAMES[1]}, @{RS_USERNAMES[2]}")
     else:
-        await update.message.reply_text("Usage: /set_rs username1 username2 username3 (up to 3)")
+        await update.message.reply_text("Usage: /set_rs username1 username2 username3 (up to 3 usernames)")
+
+# ==================== Superfast batch update ====================
+MAX_CONCURRENT = 10  # একসাথে 10 টি মেসেজ প্রসেস
+DELAY_BETWEEN_BATCHES = 1  # প্রতি batch পরে 1 সেকেন্ড ডিলে
+
+async def edit_single_message(bot, channel_id, msg, new_text):
+    try:
+        if msg.text:
+            await bot.edit_message_text(chat_id=channel_id, message_id=msg.message_id, text=new_text)
+        elif msg.caption:
+            await bot.edit_message_caption(chat_id=channel_id, message_id=msg.message_id, caption=new_text)
+    except Exception as e:
+        logger.warning(f"Could not edit message {msg.message_id}: {e}")
 
 async def batch_update(update: Update, context: ContextTypes.DEFAULT_TYPE):
     global RS_USERNAMES
     if not RS_USERNAMES[0]:
-        await update.message.reply_text("❌ Please set RS usernames with /set_rs")
+        await update.message.reply_text("❌ Please set at least one username using /set_rs")
         return
     if len(context.args) < 2:
         await update.message.reply_text("Usage: /batch_update @channelusername message_count")
         return
-    channel = context.args[0].lstrip('@')
+
+    channel_username = context.args[0].lstrip('@')
     try:
         total_count = int(context.args[1])
     except ValueError:
-        await update.message.reply_text("❌ message_count must be a number.")
+        await update.message.reply_text("❌ message_count must be a number")
         return
     if total_count > 2000:
-        await update.message.reply_text("❌ Max 2000 messages.")
+        await update.message.reply_text("❌ Max 2000 messages at a time")
         return
-    await update.message.reply_text(f"🔄 Starting batch update for @{channel} ({total_count} messages)...")
+
+    await update.message.reply_text(f"🔄 Starting superfast batch update for @{channel_username} ({total_count} messages)")
+
     try:
-        chat = await context.bot.get_chat(channel)
-        if not chat.permissions.can_edit_messages:
-            await update.message.reply_text("❌ Bot needs edit rights.")
-            return
-        processed = 0
-        edited = 0
+        chat = await context.bot.get_chat(channel_username)
+        channel_id = chat.id
+
         offset_id = 0
         batch_size = 100
-        while processed < total_count:
-            batch_count = min(batch_size, total_count - processed)
-            messages = await context.bot.get_chat_history(channel, limit=batch_count, offset=offset_id)
+        processed_count = 0
+
+        while processed_count < total_count:
+            batch_count = min(batch_size, total_count - processed_count)
+            messages = await context.bot.get_chat_history(channel_id, limit=batch_count, offset_id=offset_id)
             if not messages:
                 break
-            for msg in messages:
-                processed += 1
-                # টেক্সট বা ক্যাপশন প্রসেস
-                text_to_edit = msg.text or msg.caption or ""
-                new_text = replace_all_usernames(text_to_edit, RS_USERNAMES)
-                if new_text != text_to_edit:
-                    try:
-                        if msg.photo and msg.caption:
-                            await context.bot.edit_message_caption(
-                                chat_id=channel,
-                                message_id=msg.message_id,
-                                caption=new_text,
-                                parse_mode='HTML'
-                            )
-                        elif msg.document and msg.caption:
-                            await context.bot.edit_message_caption(
-                                chat_id=channel,
-                                message_id=msg.message_id,
-                                caption=new_text,
-                                parse_mode='HTML'
-                            )
-                        elif msg.text:
-                            await context.bot.edit_message_text(
-                                chat_id=channel,
-                                message_id=msg.message_id,
-                                text=new_text,
-                                parse_mode='HTML'
-                            )
-                        edited += 1
-                    except Exception as e:
-                        logger.error(f"Edit failed for message {msg.message_id}: {e}")
-                await asyncio.sleep(0.5)  # FloodWait এড়ানোর জন্য
+
+            # Concurrently edit messages with limited concurrency
+            sem = asyncio.Semaphore(MAX_CONCURRENT)
+            async def safe_edit(msg):
+                async with sem:
+                    text = msg.text or msg.caption or ""
+                    new_text = replace_all_usernames(text, RS_USERNAMES)
+                    await edit_single_message(context.bot, channel_id, msg, new_text)
+                    await asyncio.sleep(0.3)  # short delay to reduce flood wait
+
+            await asyncio.gather(*[safe_edit(msg) for msg in messages])
+
+            processed_count += batch_count
             offset_id += batch_count
-        await update.message.reply_text(f"✅ Done. Processed: {processed}, Edited: {edited}")
+            await asyncio.sleep(DELAY_BETWEEN_BATCHES)  # batch delay
+            await update.message.reply_text(f"✅ Processed batch: {processed_count}/{total_count} messages")
+
+        await update.message.reply_text(f"✅ Superfast batch update complete! Processed {processed_count} messages in @{channel_username}")
     except Exception as e:
         logger.error(f"Batch update failed: {e}")
-        await update.message.reply_text(f"❌ Failed: {e}")
+        await update.message.reply_text(f"❌ Batch update failed: {str(e)}")
 
+# ============= Message handlers =================
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    global RS_USERNAMES
     msg = update.message
-    # ফরোয়ার্ড করা বা মুল মেসেজ প্রসেস
-    if msg.forward_from or msg.forward_from_chat or not (msg.forward_from or msg.forward_from_chat):
-        try:
-            if msg.photo:
-                caption = msg.caption or ""
-                new_caption = replace_all_usernames(caption, RS_USERNAMES) if RS_USERNAMES[0] else caption
-                await msg.reply_photo(
-                    photo=msg.photo[-1].file_id,
-                    caption=new_caption,
-                    parse_mode='HTML'
-                )
-            elif msg.document:
-                caption = msg.caption or ""
-                new_caption = replace_all_usernames(caption, RS_USERNAMES) if RS_USERNAMES[0] else caption
-                await msg.reply_document(
-                    document=msg.document.file_id,
-                    caption=new_caption,
-                    parse_mode='HTML'
-                )
-            elif msg.text:
-                text = msg.text or ""
-                new_text = replace_all_usernames(text, RS_USERNAMES) if RS_USERNAMES[0] else text
-                await msg.reply_text(new_text, parse_mode='HTML')
-            else:
-                await msg.reply_text("✅ Content received and replicated!")
-        except Exception as e:
-            logger.error(f"Reply failed: {e}")
-            await msg.reply_text(f"❌ Error: {e}")
+    text = msg.text or msg.caption or ""
+    if not RS_USERNAMES[0]:
+        await msg.reply_text("❌ Please set at least one username using /set_rs")
+        return
+    if not text.strip() and not msg.photo and not msg.video and not msg.document:
+        return
 
-# বট চালানো
+    new_text = replace_all_usernames(text, RS_USERNAMES)
+    try:
+        if msg.forward_from_chat:
+            await msg.reply_text(f"📤 Forwarded message processed:\n\n{new_text}")
+        if msg.text:
+            await msg.reply_text(new_text)
+        elif msg.caption:
+            if msg.photo:
+                await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
+            elif msg.video:
+                await msg.reply_video(msg.video.file_id, caption=new_text)
+            elif msg.document:
+                await msg.reply_document(msg.document.file_id, caption=new_text)
+            elif msg.audio:
+                await msg.reply_audio(msg.audio.file_id, caption=new_text)
+            elif msg.voice:
+                await msg.reply_voice(msg.voice.file_id, caption=new_text)
+            elif msg.sticker:
+                await msg.reply_sticker(msg.sticker.file_id)
+    except Exception as e:
+        logger.error(f"Repost failed: {e}")
+        await msg.reply_text(f"📝 Text version:\n\n{new_text}")
+
+# ============= Run Bot and Flask =================
 def run_bot():
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("set_rs", set_rs))
     application.add_handler(CommandHandler("batch_update", batch_update))
-    application.add_handler(MessageHandler(filters.PHOTO | filters.DOCUMENT | filters.TEXT & ~filters.COMMAND, process_message))
-    logger.info("Bot started (polling)...")
+    application.add_handler(MessageHandler(
+        filters.TEXT | filters.PHOTO | filters.VIDEO | filters.AUDIO |
+        filters.Document.ALL | filters.VOICE | filters.Sticker.ALL,
+        process_message
+    ))
+    logger.info("🤖 Bot started (polling)...")
     application.run_polling(timeout=60)
 
-if __name__ == "__main__":
-    flask_thread = threading.Thread(target=lambda: app_flask.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False))
+if __name__ == '__main__':
+    # Flask সার্ভার একটি থ্রেডে চালান
+    PORT = int(os.environ.get("PORT", 10000))  # Render auto PORT
+    flask_thread = threading.Thread(target=lambda: app.run(host='0.0.0.0', port=PORT, debug=False))
     flask_thread.start()
+    # বট চালান
     run_bot()
