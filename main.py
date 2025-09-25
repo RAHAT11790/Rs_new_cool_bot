@@ -57,24 +57,23 @@ def replace_all_usernames(text: str, new_usernames: list) -> str:
 
 def force_powered_by(text: str, username: str) -> str:
     """
-    Replace any 'Dubbed By', 'Dub ভাই', 'ডাব এডভাই', etc.
+    Replace any 'Dubbed By', 'Dub by', 'Dubbing by', 'ডাব ভাই', 'ডাব এডভাই', etc.
     with '**Powered By:** @username'.
     """
     if not text or not username:
         return text
 
-    # Regex patterns for old dub attributions
     patterns = [
-        r'(\*\*?Dub(?:bed)? By\*\*?:?\s*@?[a-zA-Z0-9_]+)',
-        r'(ডাব\s*ভাই\s*@?[a-zA-Z0-9_]+)',
-        r'(ডাব\s*এডভাই\s*@?[a-zA-Z0-9_]+)'
+        r'\bDub(?:bed|bing)? by\b\s*@?[a-zA-Z0-9_]+',  # Dub by / Dubbed by / Dubbing by
+        r'ডাব\s*ভাই\s*@?[a-zA-Z0-9_]+',
+        r'ডাব\s*এডভাই\s*@?[a-zA-Z0-9_]+'
     ]
 
     new_text = text
     for pat in patterns:
         new_text = re.sub(pat, f"**Powered By:** @{username}", new_text, flags=re.IGNORECASE)
 
-    # যদি আগে কিছু না থাকে তাহলে শেষে যোগ করা যায়
+    # যদি text-এ কোনো “Powered By” না থাকে, শেষে বসিয়ে দাও
     if "**Powered By:**" not in new_text:
         new_text += f"\n**Powered By:** @{username}"
 
@@ -182,13 +181,10 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     new_text = force_powered_by(new_text, RS_USERNAMES[0])
 
     try:
-        # Text
         if msg.text:
             await msg.reply_text(new_text)
-        # Photo
         elif msg.photo:
             await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
-        # Video
         elif msg.video:
             if hasattr(msg, 'forward_date') and msg.forward_date:
                 await msg.reply_video(msg.video.file_id, caption=new_text)
@@ -198,13 +194,10 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     caption=new_text,
                     thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
                 )
-        # Document
         elif msg.document:
             await msg.reply_document(msg.document.file_id, caption=new_text)
-        # Audio
         elif msg.audio:
             await msg.reply_audio(msg.audio.file_id, caption=new_text)
-        # Voice
         elif msg.voice:
             await msg.reply_voice(msg.voice.file_id, caption=new_text)
     except Exception as e:
@@ -243,4 +236,15 @@ def run_bot():
     application.add_handler(setstart_conv)
     application.add_handler(setphoto_conv)
     application.add_handler(setcover_conv)
-    application.add_handler(CommandHandler("show_cover",
+    application.add_handler(CommandHandler("show_cover", show_cover))
+    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, process_message))
+    logger.info("🤖 Bot started...")
+    application.run_polling()
+
+# ========= Main =========
+if __name__ == "__main__":
+    PORT = int(os.environ.get("PORT", 10000))
+    # Flask server run
+    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT, debug=False)).start()
+    # Telegram bot run
+    run_bot()
