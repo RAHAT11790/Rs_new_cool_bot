@@ -38,31 +38,22 @@ def _normalize_username(u: str) -> str:
     u = re.sub(r"^t\.me/", "", u, flags=re.IGNORECASE)
     return u
 
-def clean_caption(text: str, new_usernames: list) -> str:
-    """
-    Removes Dub/Dubbed/Dubbing/... phrases and ensures only:
-    **Powered by: @username**
-    """
+def replace_all_usernames(text: str, new_usernames: list) -> str:
     if not text or not new_usernames or all(u is None for u in new_usernames):
         return text
-
-    # Remove unwanted phrases (case-insensitive)
-    text = re.sub(
-        r'\b(Dub|Dubbed|Dubbing|Dub by|Dubbed by|Dubbing by|ডাব ভাই|ডাবিং ভাই)\b',
-        '', text, flags=re.IGNORECASE
-    ).strip()
-
-    # Remove any duplicate Powered by
-    text = re.sub(r'(?:\*\*Powered by:\*\*)\s*@\w+', '', text, flags=re.IGNORECASE).strip()
-
-    # Append new Powered by
-    username = new_usernames[0]  # main RS username
-    if username:
-        if text:
-            text += f"\n**Powered by: @{username}**"
-        else:
-            text = f"**Powered by: @{username}**"
-    return text
+    pattern = r'@[a-zA-Z0-9_]{1,32}|https?://t\.me/[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}'
+    matches = re.findall(pattern, text, flags=re.IGNORECASE)
+    if not matches:
+        return text
+    new_text = text
+    for i, match in enumerate(matches[:3]):
+        if i < len(new_usernames) and new_usernames[i]:
+            username = new_usernames[i]
+            if match.startswith('@'):
+                new_text = new_text.replace(match, f"@{username}")
+            else:
+                new_text = new_text.replace(match, f"https://t.me/{username}")
+    return new_text
 
 # ========= States =========
 RS_WAIT, START_WAIT, PHOTO_WAIT, COVER_WAIT = range(4)
@@ -159,10 +150,22 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text.strip() or not RS_USERNAMES[0]:
         return
 
-    # Clean caption
-    new_text = clean_caption(text, RS_USERNAMES)
-    if new_text == text:
-        return
+    # ===== Remove unwanted "Dub" phrases (English only, with/without 'by') =====
+    unwanted_pattern = r'\b(Dub(?:bed|bing)?(?:\s*by)?|Dubby)\b'
+    text_clean = re.sub(unwanted_pattern, '', text, flags=re.IGNORECASE).strip()
+
+    # ===== Ensure "Powered by @username" exists exactly once =====
+    powered_by_text = f"Powered by :- @{RS_USERNAMES[0]}"
+    # Remove any existing powered by lines with optional variants
+    text_clean = re.sub(r'Powered\s*by\s*[:-]?\s*@\S+', '', text_clean, flags=re.IGNORECASE).strip()
+    # Add powered by at the end
+    if text_clean:
+        new_text = f"{text_clean}\n{powered_by_text}"
+    else:
+        new_text = powered_by_text
+
+    # ===== Replace usernames and t.me links =====
+    new_text = replace_all_usernames(new_text, RS_USERNAMES)
 
     try:
         # Text
@@ -173,11 +176,14 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
         # Video
         elif msg.video:
-            await msg.reply_video(
-                msg.video.file_id,
-                caption=new_text,
-                thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
-            )
+            if hasattr(msg, 'forward_date') and msg.forward_date:
+                await msg.reply_video(msg.video.file_id, caption=new_text)
+            else:
+                await msg.reply_video(
+                    msg.video.file_id,
+                    caption=new_text,
+                    thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
+                )
         # Document
         elif msg.document:
             await msg.reply_document(msg.document.file_id, caption=new_text)
@@ -230,7 +236,6 @@ def run_bot():
 
 # ========= Main =========
 if __name__ == "__main__":
-    # Flask in separate thread for free hosting health check
     PORT = int(os.environ.get("PORT", 10000))
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT, debug=False)).start()
     run_bot()
