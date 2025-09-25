@@ -57,27 +57,24 @@ def replace_all_usernames(text: str, new_usernames: list) -> str:
 
 def force_powered_by(text: str, username: str) -> str:
     """
-    Replace any 'Dubbed By', 'Dub by', 'Dubbing by', 'ডাব ভাই', 'ডাব এডভাই', etc.
-    with '**Powered By:** @username'.
+    Remove any 'Dubbed By', 'Dub by', 'Dubbing by', 'ডাব ভাই', 'ডাব এডভাই', etc.
+    and keep only plain 'Powered By: @username' text.
     """
-    if not text or not username:
+    if not username:
         return text
 
     patterns = [
-        r'\bDub(?:bed|bing)? by\b\s*@?[a-zA-Z0-9_]+',  # Dub by / Dubbed by / Dubbing by
-        r'ডাব\s*ভাই\s*@?[a-zA-Z0-9_]+',
-        r'ডাব\s*এডভাই\s*@?[a-zA-Z0-9_]+'
+        r'Dub(?:bed|bing)?\s*by\s*[:-]?\s*@?[a-zA-Z0-9_]+',
+        r'ডাব\s*ভাই\s*[:-]?\s*@?[a-zA-Z0-9_]+',
+        r'ডাব\s*এডভাই\s*[:-]?\s*@?[a-zA-Z0-9_]+'
     ]
 
     new_text = text
     for pat in patterns:
-        new_text = re.sub(pat, f"**Powered By:** @{username}", new_text, flags=re.IGNORECASE)
+        new_text = re.sub(pat, '', new_text, flags=re.IGNORECASE)
 
-    # যদি text-এ কোনো “Powered By” না থাকে, শেষে বসিয়ে দাও
-    if "**Powered By:**" not in new_text:
-        new_text += f"\n**Powered By:** @{username}"
-
-    return new_text
+    new_text = new_text.strip()
+    return f"Powered By: @{username}"
 
 # ========= States =========
 RS_WAIT, START_WAIT, PHOTO_WAIT, COVER_WAIT = range(4)
@@ -177,7 +174,7 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Replace usernames and t.me links
     new_text = replace_all_usernames(text, RS_USERNAMES)
 
-    # Apply powered by feature
+    # Apply powered by feature (plain text)
     new_text = force_powered_by(new_text, RS_USERNAMES[0])
 
     try:
@@ -244,7 +241,5 @@ def run_bot():
 # ========= Main =========
 if __name__ == "__main__":
     PORT = int(os.environ.get("PORT", 10000))
-    # Flask server run
     threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT, debug=False)).start()
-    # Telegram bot run
     run_bot()
