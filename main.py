@@ -38,20 +38,40 @@ def _normalize_username(u: str) -> str:
     u = re.sub(r"^t\.me/", "", u, flags=re.IGNORECASE)
     return u
 
+def replace_all_usernames(text: str, new_usernames: list) -> str:
+    if not text or not new_usernames or all(u is None for u in new_usernames):
+        return text
+    pattern = r'@[a-zA-Z0-9_]{1,32}|https?://t\.me/[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}'
+    matches = re.findall(pattern, text, flags=re.IGNORECASE)
+    if not matches:
+        return text
+    new_text = text
+    for i, match in enumerate(matches[:3]):
+        if i < len(new_usernames) and new_usernames[i]:
+            username = new_usernames[i]
+            if match.startswith('@'):
+                new_text = new_text.replace(match, f"@{username}")
+            else:
+                new_text = new_text.replace(match, f"https://t.me/{username}")
+    return new_text
+
 def clean_caption(text: str, username: str) -> str:
     if not text:
         text = ""
 
-    # Remove unwanted "dub" related words (case-insensitive)
+    # Remove unwanted Dub-related words
     patterns = [r"\bDub by\b", r"\bDubbed by\b", r"\bDubbing by\b", r"\bDub\b"]
     for pat in patterns:
         text = re.sub(pat, "", text, flags=re.IGNORECASE)
 
-    # Ensure only one Powered by line
-    powered_line = f"Powered by: @{username}"
+    # Clean spaces
+    text = re.sub(r"\s+", " ", text).strip()
+
+    powered_line = f"<b>Powered by: @{username}</b>"
+
     if powered_line not in text:
-        if text.strip():
-            text = text.strip() + "\n\n" + powered_line
+        if text:
+            text = text + "\n\n" + powered_line
         else:
             text = powered_line
 
@@ -63,87 +83,87 @@ RS_WAIT, START_WAIT, PHOTO_WAIT, COVER_WAIT = range(4)
 # ========= /start =========
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if START_PHOTO:
-        await update.message.reply_photo(photo=START_PHOTO, caption=START_MESSAGE)
+        await update.message.reply_photo(photo=START_PHOTO, caption=START_MESSAGE, parse_mode="HTML")
     else:
-        await update.message.reply_text(START_MESSAGE)
+        await update.message.reply_text(START_MESSAGE, parse_mode="HTML")
 
 # ========= /set_rs =========
 async def setrs_start(update, context):
-    await update.message.reply_text("✏️ Send 1–3 usernames separated by space:")
+    await update.message.reply_text("Send 1–3 usernames separated by space:")
     return RS_WAIT
 
 async def setrs_receive(update, context):
     global RS_USERNAMES
     usernames = update.message.text.split()[:3]
     RS_USERNAMES = [_normalize_username(u) for u in usernames] + [None]*(3-len(usernames))
-    await update.message.reply_text(f"✅ RS usernames set: {RS_USERNAMES}")
+    await update.message.reply_text(f"RS usernames set: {RS_USERNAMES}")
     return ConversationHandler.END
 
 # ========= /setstart =========
 async def setstart_start(update, context):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Only Admin can use this command.")
+        await update.message.reply_text("Only Admin can use this command.")
         return ConversationHandler.END
-    await update.message.reply_text("✏️ Send the new start message text:")
+    await update.message.reply_text("Send the new start message text:")
     return START_WAIT
 
 async def setstart_receive(update, context):
     global START_MESSAGE
     START_MESSAGE = update.message.text
-    await update.message.reply_text("✅ Start message updated!")
+    await update.message.reply_text("Start message updated!")
     return ConversationHandler.END
 
 # ========= /setphoto =========
 async def setphoto_start(update, context):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Only Admin can use this command.")
+        await update.message.reply_text("Only Admin can use this command.")
         return ConversationHandler.END
-    await update.message.reply_text("📸 Send a photo or paste a link to set the start photo:")
+    await update.message.reply_text("Send a photo or link to set the start photo:")
     return PHOTO_WAIT
 
 async def setphoto_receive(update, context):
     global START_PHOTO
     if update.message.photo:
         START_PHOTO = update.message.photo[-1].file_id
-        await update.message.reply_text("✅ Start photo updated from upload!")
+        await update.message.reply_text("Start photo updated from upload!")
     elif update.message.text:
         START_PHOTO = update.message.text.strip()
-        await update.message.reply_text("✅ Start photo updated from link!")
+        await update.message.reply_text("Start photo updated from link!")
     else:
-        await update.message.reply_text("⚠️ Invalid input. Send a photo or valid link.")
+        await update.message.reply_text("Invalid input. Send a photo or valid link.")
         return PHOTO_WAIT
     return ConversationHandler.END
 
 # ========= /set_cover =========
 async def set_cover_start(update, context):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Only Admin can use this command.")
+        await update.message.reply_text("Only Admin can use this command.")
         return ConversationHandler.END
-    await update.message.reply_text("📸 Send a photo to use as video thumbnail:")
+    await update.message.reply_text("Send a photo to use as video thumbnail:")
     return COVER_WAIT
 
 async def set_cover_receive(update, context):
     global COVER_THUMBNAIL
     if update.message.photo:
         COVER_THUMBNAIL = update.message.photo[-1].file_id
-        await update.message.reply_text("✅ Video thumbnail updated!")
+        await update.message.reply_text("Video thumbnail updated!")
     elif update.message.text:
         COVER_THUMBNAIL = update.message.text.strip()
-        await update.message.reply_text("✅ Video thumbnail updated from link!")
+        await update.message.reply_text("Video thumbnail updated from link!")
     else:
-        await update.message.reply_text("⚠️ Invalid input. Send a photo or valid link.")
+        await update.message.reply_text("Invalid input. Send a photo or valid link.")
         return COVER_WAIT
     return ConversationHandler.END
 
 # ========= /show_cover =========
 async def show_cover(update, context):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("❌ Only Admin can use this command.")
+        await update.message.reply_text("Only Admin can use this command.")
         return
     if COVER_THUMBNAIL:
-        await update.message.reply_photo(COVER_THUMBNAIL, caption="📸 Current video thumbnail cover")
+        await update.message.reply_photo(COVER_THUMBNAIL, caption="Current video thumbnail cover")
     else:
-        await update.message.reply_text("⚠️ No cover thumbnail set yet.")
+        await update.message.reply_text("No cover thumbnail set yet.")
 
 # ========= Message handler =========
 async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -152,29 +172,34 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text.strip() or not RS_USERNAMES[0]:
         return
 
+    # Replace usernames
+    new_text = replace_all_usernames(text, RS_USERNAMES)
+
+    # Add Powered by
     username = RS_USERNAMES[0]
-    new_text = clean_caption(text, username)
+    new_text = clean_caption(new_text, username)
 
     try:
         if msg.text:
-            await msg.reply_text(new_text)
+            await msg.reply_text(new_text, parse_mode="HTML")
         elif msg.photo:
-            await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
+            await msg.reply_photo(msg.photo[-1].file_id, caption=new_text, parse_mode="HTML")
         elif msg.video:
             if hasattr(msg, 'forward_date') and msg.forward_date:
-                await msg.reply_video(msg.video.file_id, caption=new_text)
+                await msg.reply_video(msg.video.file_id, caption=new_text, parse_mode="HTML")
             else:
                 await msg.reply_video(
                     msg.video.file_id,
                     caption=new_text,
+                    parse_mode="HTML",
                     thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
                 )
         elif msg.document:
-            await msg.reply_document(msg.document.file_id, caption=new_text)
+            await msg.reply_document(msg.document.file_id, caption=new_text, parse_mode="HTML")
         elif msg.audio:
-            await msg.reply_audio(msg.audio.file_id, caption=new_text)
+            await msg.reply_audio(msg.audio.file_id, caption=new_text, parse_mode="HTML")
         elif msg.voice:
-            await msg.reply_voice(msg.voice.file_id, caption=new_text)
+            await msg.reply_voice(msg.voice.file_id, caption=new_text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Reply failed: {e}")
 
