@@ -38,54 +38,24 @@ def _normalize_username(u: str) -> str:
     u = re.sub(r"^t\.me/", "", u, flags=re.IGNORECASE)
     return u
 
-def replace_all_usernames(text: str, new_usernames: list) -> str:
-    if not text or not new_usernames or all(u is None for u in new_usernames):
-        return text
-    pattern = r'@[a-zA-Z0-9_]{1,32}|https?://t\.me/[a-zA-Z0-9_]{1,32}|t\.me/[a-zA-Z0-9_]{1,32}'
-    matches = re.findall(pattern, text, flags=re.IGNORECASE)
-    if not matches:
-        return text
-    new_text = text
-    for i, match in enumerate(matches[:3]):
-        if i < len(new_usernames) and new_usernames[i]:
-            username = new_usernames[i]
-            if match.startswith('@'):
-                new_text = new_text.replace(match, f"@{username}")
-            else:
-                new_text = new_text.replace(match, f"https://t.me/{username}")
-    return new_text
+def clean_caption(text: str, username: str) -> str:
+    if not text:
+        text = ""
 
-# ========= Powered By Feature =========
-def force_powered_by(text: str, username: str) -> str:
-    """
-    Remove Dub/Dubbed/Dubbing/ডাব ভাই/ডাব এডভাই
-    Keep all other text intact
-    Append bold 'Powered By: @username' at the end if not already present
-    """
-    if not username:
-        return text
-
-    patterns = [
-        r'Dub(?:bed|bing)?\s*by\s*[:-]?\s*@?[a-zA-Z0-9_]+',
-        r'ডাব\s*ভাই\s*[:-]?\s*@?[a-zA-Z0-9_]+',
-        r'ডাব\s*এডভাই\s*[:-]?\s*@?[a-zA-Z0-9_]+'
-    ]
-
-    new_text = text
+    # Remove unwanted "dub" related words (case-insensitive)
+    patterns = [r"\bDub by\b", r"\bDubbed by\b", r"\bDubbing by\b", r"\bDub\b"]
     for pat in patterns:
-        new_text = re.sub(pat, '', new_text, flags=re.IGNORECASE)
+        text = re.sub(pat, "", text, flags=re.IGNORECASE)
 
-    new_text = new_text.strip()
-
-    powered = f"<b>Powered By: @{username}</b>"
-
-    if powered not in new_text:
-        if new_text:
-            return f"{new_text}\n{powered}"
+    # Ensure only one Powered by line
+    powered_line = f"**Powered by: @{username}**"
+    if powered_line not in text:
+        if text.strip():
+            text = text.strip() + "\n\n" + powered_line
         else:
-            return powered
-    else:
-        return new_text
+            text = powered_line
+
+    return text
 
 # ========= States =========
 RS_WAIT, START_WAIT, PHOTO_WAIT, COVER_WAIT = range(4)
@@ -182,35 +152,29 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text.strip() or not RS_USERNAMES[0]:
         return
 
-    # Replace usernames/t.me links
-    new_text = replace_all_usernames(text, RS_USERNAMES)
-    # Force Powered By feature
-    new_text = force_powered_by(new_text, RS_USERNAMES[0])
+    username = RS_USERNAMES[0]
+    new_text = clean_caption(text, username)
 
     try:
-        # Text
         if msg.text:
-            await msg.reply_text(new_text, parse_mode="HTML")
-        # Photo
+            await msg.reply_text(new_text)
         elif msg.photo:
-            await msg.reply_photo(msg.photo[-1].file_id, caption=new_text, parse_mode="HTML")
-        # Video
+            await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
         elif msg.video:
-            await msg.reply_video(
-                msg.video.file_id,
-                caption=new_text,
-                parse_mode="HTML",
-                thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
-            )
-        # Document
+            if hasattr(msg, 'forward_date') and msg.forward_date:
+                await msg.reply_video(msg.video.file_id, caption=new_text)
+            else:
+                await msg.reply_video(
+                    msg.video.file_id,
+                    caption=new_text,
+                    thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
+                )
         elif msg.document:
-            await msg.reply_document(msg.document.file_id, caption=new_text, parse_mode="HTML")
-        # Audio
+            await msg.reply_document(msg.document.file_id, caption=new_text)
         elif msg.audio:
-            await msg.reply_audio(msg.audio.file_id, caption=new_text, parse_mode="HTML")
-        # Voice
+            await msg.reply_audio(msg.audio.file_id, caption=new_text)
         elif msg.voice:
-            await msg.reply_voice(msg.voice.file_id, caption=new_text, parse_mode="HTML")
+            await msg.reply_voice(msg.voice.file_id, caption=new_text)
     except Exception as e:
         logger.error(f"Reply failed: {e}")
 
