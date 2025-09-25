@@ -55,6 +55,31 @@ def replace_all_usernames(text: str, new_usernames: list) -> str:
                 new_text = new_text.replace(match, f"https://t.me/{username}")
     return new_text
 
+def force_powered_by(text: str, username: str) -> str:
+    """
+    Replace any 'Dubbed By', 'Dub ভাই', 'ডাব এডভাই', etc.
+    with '**Powered By:** @username'.
+    """
+    if not text or not username:
+        return text
+
+    # Regex patterns for old dub attributions
+    patterns = [
+        r'(\*\*?Dub(?:bed)? By\*\*?:?\s*@?[a-zA-Z0-9_]+)',
+        r'(ডাব\s*ভাই\s*@?[a-zA-Z0-9_]+)',
+        r'(ডাব\s*এডভাই\s*@?[a-zA-Z0-9_]+)'
+    ]
+
+    new_text = text
+    for pat in patterns:
+        new_text = re.sub(pat, f"**Powered By:** @{username}", new_text, flags=re.IGNORECASE)
+
+    # যদি আগে কিছু না থাকে তাহলে শেষে যোগ করা যায়
+    if "**Powered By:**" not in new_text:
+        new_text += f"\n**Powered By:** @{username}"
+
+    return new_text
+
 # ========= States =========
 RS_WAIT, START_WAIT, PHOTO_WAIT, COVER_WAIT = range(4)
 
@@ -152,8 +177,9 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # Replace usernames and t.me links
     new_text = replace_all_usernames(text, RS_USERNAMES)
-    if new_text == text:
-        return
+
+    # Apply powered by feature
+    new_text = force_powered_by(new_text, RS_USERNAMES[0])
 
     try:
         # Text
@@ -164,7 +190,6 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
         # Video
         elif msg.video:
-            # Only apply thumbnail if bot/user uploaded video
             if hasattr(msg, 'forward_date') and msg.forward_date:
                 await msg.reply_video(msg.video.file_id, caption=new_text)
             else:
@@ -218,13 +243,4 @@ def run_bot():
     application.add_handler(setstart_conv)
     application.add_handler(setphoto_conv)
     application.add_handler(setcover_conv)
-    application.add_handler(CommandHandler("show_cover", show_cover))
-    application.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, process_message))
-    logger.info("🤖 Bot started...")
-    application.run_polling()
-
-# ========= Main =========
-if __name__ == "__main__":
-    PORT = int(os.environ.get("PORT", 10000))
-    threading.Thread(target=lambda: app.run(host="0.0.0.0", port=PORT, debug=False)).start()
-    run_bot()
+    application.add_handler(CommandHandler("show_cover",
