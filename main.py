@@ -48,7 +48,7 @@ def clean_caption(text: str, username: str) -> str:
         text = re.sub(pat, "", text, flags=re.IGNORECASE)
 
     # Ensure only one Powered by line
-    powered_line = f"**Powered by: @{username}**"
+    powered_line = f"Powered by: @{username}"
     if powered_line not in text:
         if text.strip():
             text = text.strip() + "\n\n" + powered_line
