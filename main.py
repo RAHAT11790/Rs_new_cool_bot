@@ -150,39 +150,33 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text.strip() or not RS_USERNAMES[0]:
         return
 
-    # ===== Remove unwanted "Dub" phrases AND possible attached usernames =====
-    unwanted_pattern = r'\b(Dub(?:bed|bing)?|Dubby)(\s*by)?(\s*[:-]?\s*(?:@[\w_]{1,32}|https?://t\.me/[\w_]{1,32}|t\.me/[\w_]{1,32}))?'
-    text_clean = re.sub(unwanted_pattern, '', text, flags=re.IGNORECASE).strip()
-
-    # ===== Ensure "Powered by @username" exists exactly once =====
-    powered_by_text = f"Powered by :- @{RS_USERNAMES[0]}"
-    text_clean = re.sub(r'Powered\s*by\s*[:-]?\s*@\S+', '', text_clean, flags=re.IGNORECASE).strip()
-
-    if text_clean:
-        new_text = f"{text_clean}\n{powered_by_text}"
-    else:
-        new_text = powered_by_text
-
-    new_text = replace_all_usernames(new_text, RS_USERNAMES)
+    # Replace usernames and t.me links
+    new_text = replace_all_usernames(text, RS_USERNAMES)
+    if new_text == text:
+        return
 
     try:
+        # Text
         if msg.text:
             await msg.reply_text(new_text)
+        # Photo
         elif msg.photo:
             await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
+        # Video
         elif msg.video:
-            if hasattr(msg, 'forward_date') and msg.forward_date:
-                await msg.reply_video(msg.video.file_id, caption=new_text)
-            else:
-                await msg.reply_video(
-                    msg.video.file_id,
-                    caption=new_text,
-                    thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
-                )
+            # Fix: Always apply COVER_THUMBNAIL if set
+            await msg.reply_video(
+                msg.video.file_id,
+                caption=new_text,
+                thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
+            )
+        # Document
         elif msg.document:
             await msg.reply_document(msg.document.file_id, caption=new_text)
+        # Audio
         elif msg.audio:
             await msg.reply_audio(msg.audio.file_id, caption=new_text)
+        # Voice
         elif msg.voice:
             await msg.reply_voice(msg.voice.file_id, caption=new_text)
     except Exception as e:
