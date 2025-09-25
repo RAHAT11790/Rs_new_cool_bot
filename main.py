@@ -55,10 +55,12 @@ def replace_all_usernames(text: str, new_usernames: list) -> str:
                 new_text = new_text.replace(match, f"https://t.me/{username}")
     return new_text
 
+# ========= Powered By Feature =========
 def force_powered_by(text: str, username: str) -> str:
     """
-    Remove any 'Dubbed By', 'Dub by', 'Dubbing by', 'ডাব ভাই', 'ডাব এডভাই', etc.
-    and keep only plain 'Powered By: @username' text.
+    Remove Dub/Dubbed/Dubbing/ডাব ভাই/ডাব এডভাই
+    Keep all other text intact
+    Append bold 'Powered By: @username' at the end if not already present
     """
     if not username:
         return text
@@ -74,7 +76,16 @@ def force_powered_by(text: str, username: str) -> str:
         new_text = re.sub(pat, '', new_text, flags=re.IGNORECASE)
 
     new_text = new_text.strip()
-    return f"Powered By: @{username}"
+
+    powered = f"<b>Powered By: @{username}</b>"
+
+    if powered not in new_text:
+        if new_text:
+            return f"{new_text}\n{powered}"
+        else:
+            return powered
+    else:
+        return new_text
 
 # ========= States =========
 RS_WAIT, START_WAIT, PHOTO_WAIT, COVER_WAIT = range(4)
@@ -171,32 +182,35 @@ async def process_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not text.strip() or not RS_USERNAMES[0]:
         return
 
-    # Replace usernames and t.me links
+    # Replace usernames/t.me links
     new_text = replace_all_usernames(text, RS_USERNAMES)
-
-    # Apply powered by feature (plain text)
+    # Force Powered By feature
     new_text = force_powered_by(new_text, RS_USERNAMES[0])
 
     try:
+        # Text
         if msg.text:
-            await msg.reply_text(new_text)
+            await msg.reply_text(new_text, parse_mode="HTML")
+        # Photo
         elif msg.photo:
-            await msg.reply_photo(msg.photo[-1].file_id, caption=new_text)
+            await msg.reply_photo(msg.photo[-1].file_id, caption=new_text, parse_mode="HTML")
+        # Video
         elif msg.video:
-            if hasattr(msg, 'forward_date') and msg.forward_date:
-                await msg.reply_video(msg.video.file_id, caption=new_text)
-            else:
-                await msg.reply_video(
-                    msg.video.file_id,
-                    caption=new_text,
-                    thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
-                )
+            await msg.reply_video(
+                msg.video.file_id,
+                caption=new_text,
+                parse_mode="HTML",
+                thumb=COVER_THUMBNAIL if COVER_THUMBNAIL else None
+            )
+        # Document
         elif msg.document:
-            await msg.reply_document(msg.document.file_id, caption=new_text)
+            await msg.reply_document(msg.document.file_id, caption=new_text, parse_mode="HTML")
+        # Audio
         elif msg.audio:
-            await msg.reply_audio(msg.audio.file_id, caption=new_text)
+            await msg.reply_audio(msg.audio.file_id, caption=new_text, parse_mode="HTML")
+        # Voice
         elif msg.voice:
-            await msg.reply_voice(msg.voice.file_id, caption=new_text)
+            await msg.reply_voice(msg.voice.file_id, caption=new_text, parse_mode="HTML")
     except Exception as e:
         logger.error(f"Reply failed: {e}")
 
